@@ -1,0 +1,202 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.datasets import make_moons
+from sklearn.model_selection import train_test_split
+
+torch.manual_seed(42)
+np.random.seed(42)
+
+# 1. Standard ReLU neuron
+class StandardNeuron(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+    def forward(self, x):
+        return F.relu(self.linear(x))
+
+
+# 2. Polynomial / Quadratic neuron (Fan et al. form)
+# f(x) = (x^T w_r)(x^T w_g) + x^T (x ⊙ w_b)
+class PolynomialNeuron(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear_r = nn.Linear(in_features, out_features)
+        self.linear_g = nn.Linear(in_features, out_features)
+        self.linear_b = nn.Linear(in_features, out_features)
+    def forward(self, x):
+        return self.linear_r(x) * self.linear_g(x) + self.linear_b(x * x)
+
+
+# 3. Dendritic neuron — multiple branches, each with local nonlinearity
+class DendriticNeuron(nn.Module):
+    def __init__(self, in_features, out_features, branches=3):
+        super().__init__()
+        self.branches = nn.ModuleList([
+            nn.Linear(in_features, out_features) for _ in range(branches)
+            ])
+    def forward(self, x):
+        out = torch.zeros(x.size(0), self.branches[0].out_features, device=x.device)
+        for branch in self.branches:
+            out = out + torch.tanh(branch(x))
+            return out
+
+
+# 4. Spiking neuron — LIF with surrogate gradient
+class SpikingNeuron(nn.Module):
+    def __init__(self, in_features, out_features,
+    threshold=1.0, decay=0.9, time_steps=10, beta=10.0):
+        super().__init__()
+        self.fc = nn.Linear(in_features, out_features)
+        self.threshold = threshold
+        self.decay = decay
+        self.time_steps = time_steps
+        self.beta = beta
+        
+    def forward(self, x):
+        I = self.fc(x)
+        mem = torch.zeros_like(I)
+        spike_sum = torch.zeros_like(I)
+        for _ in range(self.time_steps):
+            mem = self.decay * mem + I
+            spike = torch.sigmoid(self.beta * (mem - self.threshold))
+            mem = mem * (1.0 - spike)
+            spike_sum = spike_sum + spike
+        return spike_sum / self.time_steps
+
+
+# 5. Heterogeneous layer — splits hidden units across the 4 neuron families
+class HeterogeneousLayer(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        per = out_features // 4
+        rem = out_features - 3 * per
+        self.standard = StandardNeuron(in_features, per)
+        self.poly = PolynomialNeuron(in_features, per)
+        self.dendritic = DendriticNeuron(in_features, per)
+        self.spiking = SpikingNeuron(in_features, rem)
+        self.norm = nn.LayerNorm(out_features)
+
+    def forward(self, x):
+        combined = torch.cat([
+        self.standard(x),
+        self.poly(x),
+        self.dendritic(x),
+        self.spiking(x),
+        ], dim=1)
+        return F.relu(self.norm(combined))
+
+
+# 6. Networks
+class StandardNet(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim),
+        )
+    def forward(self, x):
+        return self.net(x)
+
+
+class HeterogeneousNet(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.layer1 = HeterogeneousLayer(input_dim, hidden_dim)
+        self.layer2 = HeterogeneousLayer(hidden_dim, hidden_dim)
+        self.final = nn.Linear(hidden_dim, output_dim)
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        return self.final(x)
+
+
+# 7. Training loop
+def train_model(model, X_train, y_train, X_test, y_test, epochs=300, lr=0.01):
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = nn.CrossEntropyLoss()
+    train_losses, test_accs = [], []
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        loss = loss_fn(model(X_train), y_train)
+        loss.backward()
+        optimizer.step()
+        train_losses.append(loss.item())
+
+        model.eval()
+        with torch.no_grad():
+            acc = (model(X_test).argmax(1) == y_test).float().mean().item()
+        test_accs.append(acc)
+    return train_losses, test_accs
+
+
+def count_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def plot_decision_boundary(model, X, y, ax, title):
+    x_min, x_max = X[:, 0].min() - 0.5, X[:, 0].max() + 0.5
+    y_min, y_max = X[:, 1].min() - 0.5, X[:, 1].max() + 0.5
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 200),
+                        np.linspace(y_min, y_max, 200))
+    grid = torch.FloatTensor(np.c_[xx.ravel(), yy.ravel()])
+    model.eval()
+    with torch.no_grad():
+        Z = model(grid).argmax(1).numpy().reshape(xx.shape)
+    ax.contourf(xx, yy, Z, alpha=0.35, cmap='RdBu')
+    ax.scatter(X[:, 0], X[:, 1], c=y, cmap='RdBu', edgecolor='k', s=18)
+    ax.set_title(title)
+    ax.set_xticks([]); ax.set_yticks([])
+
+
+# 8. Run experiment
+X, y = make_moons(n_samples=1000, noise=0.20, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+Xtr = torch.FloatTensor(X_train); ytr = torch.LongTensor(y_train)
+Xte = torch.FloatTensor(X_test); yte = torch.LongTensor(y_test)
+
+HIDDEN, EPOCHS = 32, 300
+
+print("Training Standard Net (ReLU only)...")
+std_net = StandardNet(2, HIDDEN, 2)
+std_loss, std_acc = train_model(std_net, Xtr, ytr, Xte, yte, epochs=EPOCHS)
+
+print("Training Heterogeneous Net (standard + polynomial + dendritic + spiking)...")
+het_net = HeterogeneousNet(2, HIDDEN, 2)
+het_loss, het_acc = train_model(het_net, Xtr, ytr, Xte, yte, epochs=EPOCHS)
+
+n_std, n_het = count_params(std_net), count_params(het_net)
+print("\n" + "=" * 60)
+print(f"{'Model':<20} {'Params':>10} {'Final Test Acc':>18}")
+print("-" * 60)
+print(f"{'Standard':<20} {n_std:>10,} {std_acc[-1]:>17.3f}")
+print(f"{'Heterogeneous':<20} {n_het:>10,} {het_acc[-1]:>17.3f}")
+print("=" * 60)
+
+# Training curves
+fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+axes[0].plot(std_loss, label='Standard', lw=2)
+axes[0].plot(het_loss, label='Heterogeneous', lw=2)
+axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('Training loss')
+axes[0].set_title('Training Loss'); axes[0].legend(); axes[0].grid(alpha=0.3)
+
+axes[1].plot(std_acc, label='Standard', lw=2)
+axes[1].plot(het_acc, label='Heterogeneous', lw=2)
+axes[1].set_xlabel('Epoch'); axes[1].set_ylabel('Test accuracy')
+axes[1].set_title('Test Accuracy'); axes[1].legend(); axes[1].grid(alpha=0.3)
+plt.tight_layout(); plt.show()
+
+# Decision boundaries
+fig2, axes2 = plt.subplots(1, 2, figsize=(11, 5))
+plot_decision_boundary(std_net, X, y, axes2[0], f'Standard NN  (test acc = {std_acc[-1]:.3f})')
+plot_decision_boundary(het_net, X, y, axes2[1], f'Heterogeneous NN (test acc = {het_acc[-1]:.3f})')
+plt.tight_layout(); plt.show()
