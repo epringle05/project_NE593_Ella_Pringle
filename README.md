@@ -89,10 +89,11 @@ dendritic (multi-branch), and spiking (leaky integrate-and-fire).
 Both models are trained on the two-moons binary classification benchmark and
 evaluated on training loss, test accuracy, and decision boundary geometry.
 
-Reference:
+References:
     Fan et al., "Expressivity of Quadratic Neurons" (polynomial neuron formulation)
     Chrysos et al., "Polynomial Networks" (deep polynomial architectures)
-    Fan, FL., Li, Y., Zeng, T. et al. Towards NeuroAI: introducing neuronal diversity into       artificial neural networks. Med-X 3, 2 (2025). https://doi.org/10.1007/s44258-024-00042-2
+    Fan, FL., Li, Y., Zeng, T. et al. Towards NeuroAI: introducing neuronal diversity into artificial neural networks. Med-X 3, 2 (2025). https://doi.org/10.1007/s44258-024-00042-2
+    LLM Use: Claude and ChatGPT - Used for debugging and code comments/docstrings
 
 Dependencies:
     torch, numpy, matplotlib, scikit-learn
