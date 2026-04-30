@@ -1,4 +1,4 @@
-# project_NE593_Ella_Pringle
+# project_NE593_Ella_Pringle_and_Patrick_Normantas
 
 Compares a standard ReLU network against a heterogeneous network that mixes
 four biologically-inspired neuron types: standard ReLU, polynomial/quadratic,
