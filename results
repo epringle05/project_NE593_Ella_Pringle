@@ -7,4 +7,5 @@ Standard                  1,346             0.977
 Heterogeneous             2,498             0.973
 ============================================================
 
-
+# PNG files are uploaded to repository as well, showing traing loss and test accuracy 
+(Figure 1) & decision boundaries (Figure 2).
